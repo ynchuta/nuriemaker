@@ -282,7 +282,7 @@ export function radiusFor(thickness: number, width: number, height: number): num
 /** 中心線モードの線の半径（px）。中心線は 1px なので、太さ 1 でも見える太さから始める */
 export function centerRadiusFor(thickness: number, width: number, height: number): number {
   const scale = Math.max(width, height) / 1600;
-  return (1.2 + (clamp(thickness, 1, 10) - 1) * 0.8) * scale;
+  return (0.8 + (clamp(thickness, 1, 10) - 1) * 0.5) * scale;
 }
 
 /**
@@ -334,6 +334,97 @@ export function thin(mask: Uint8Array, w: number, h: number): void {
     }
     if (changed) candidates = candidates.filter((i) => mask[i] === 1);
   }
+}
+
+/**
+ * 太い線（半分の太さが lineRadius の約 4 割を超える部分）だけを、1px の中心線に置き換える。
+ */
+export function replaceThickStrokesWithCenterLine(mask: Uint8Array, w: number, h: number, lineRadius: number): void {
+  const n = w * h;
+  const halfWidth = Math.max(4, lineRadius * 0.4 + 1);
+
+  // 中心線は、すき間を埋めて縁をならした写しから作る（小さな輪っかやヒゲを防ぐ）
+  const skel = mask.slice();
+  const holes = new Uint8Array(n);
+  for (let i = 0; i < n; i++) holes[i] = skel[i] ? 0 : 1;
+  const before = holes.slice();
+  removeSmallComponents(holes, w, h, Math.round(Math.max(20, (lineRadius * 1.2) ** 2)));
+  for (let i = 0; i < n; i++) if (before[i] && !holes[i]) skel[i] = 1;
+  smoothMask(skel, w, h, Math.max(1, lineRadius * 0.3));
+  thin(skel, w, h);
+  const spur = Math.round(clamp(lineRadius * 3, 8, 45));
+  pruneSpurs(skel, w, h, spur);
+  pruneSpurs(skel, w, h, spur);
+
+  // 太い部分を探す: 白い画素からの距離が halfWidth を超える黒画素が「太い線の芯」
+  const white = new Uint8Array(n);
+  for (let i = 0; i < n; i++) white[i] = mask[i] ? 0 : 1;
+  const inside = distanceTransform(white, w, h);
+  const core = new Uint8Array(n);
+  for (let i = 0; i < n; i++) if (inside[i] > halfWidth) core[i] = 1;
+  // 芯のうち「細長いもの」だけを線とみなす。目や塗りつぶした小物のような丸っこい塊は黒いまま残す
+  keepElongatedComponents(core, w, h, halfWidth * 6);
+  let any = false;
+  for (let i = 0; i < n; i++) if (core[i]) { any = true; break; }
+  if (!any) return;
+  // 芯の近く（太い線の範囲）だけ中心線に置き換える
+  const distToCore = distanceTransform(core, w, h);
+  const reach = halfWidth * 2 + 1.5;
+  for (let i = 0; i < n; i++) {
+    if (distToCore[i] > reach) continue;
+    if (mask[i]) mask[i] = skel[i];
+    else if (skel[i]) mask[i] = 1;
+  }
+  // 置き換えで残った小さな切れ端（点）を消す
+  removeSmallComponents(mask, w, h, Math.round(halfWidth * 3));
+}
+
+/** 8 近傍の塊のうち、縦か横の広がりが minExtent px 未満のものを消す */
+export function keepElongatedComponents(mask: Uint8Array, w: number, h: number, minExtent: number): void {
+  const visited = new Uint8Array(w * h);
+  const stack: number[] = [];
+  const members: number[] = [];
+  for (let start = 0; start < mask.length; start++) {
+    if (!mask[start] || visited[start]) continue;
+    stack.length = 0;
+    members.length = 0;
+    stack.push(start);
+    visited[start] = 1;
+    let x0 = w, x1 = 0, y0 = h, y1 = 0;
+    while (stack.length) {
+      const i = stack.pop()!;
+      members.push(i);
+      const x = i % w;
+      const y = (i - x) / w;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+      for (let dy = -1; dy <= 1; dy++) {
+        const yy = y + dy;
+        if (yy < 0 || yy >= h) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          const xx = x + dx;
+          if (xx < 0 || xx >= w) continue;
+          const j = yy * w + xx;
+          if (mask[j] && !visited[j]) {
+            visited[j] = 1;
+            stack.push(j);
+          }
+        }
+      }
+    }
+    if (Math.max(x1 - x0, y1 - y0) < minExtent) for (const i of members) mask[i] = 0;
+  }
+}
+
+/** 2 値画像をぼかしてからしきい値をかけ直し、縁のギザギザをならす */
+export function smoothMask(mask: Uint8Array, w: number, h: number, sigma: number): void {
+  const f = new Float32Array(mask.length);
+  for (let i = 0; i < mask.length; i++) f[i] = mask[i];
+  const b = gaussianBlur(f, w, h, sigma);
+  // 細い線が消えないよう、元の黒画素は残す
+  for (let i = 0; i < mask.length; i++) mask[i] = mask[i] || b[i] > 0.5 ? 1 : 0;
 }
 
 /**
@@ -437,23 +528,12 @@ export function renderLineArt(maps: EdgeMaps, params: LineArtParams): Uint8Clamp
   }
 
   // 4. 小さな点を消す（画像サイズに合わせて面積を調整）
-  const areaScale = (Math.max(w, h) / 1600) ** 2;
-  removeSmallComponents(mask, w, h, Math.max(2, Math.round(th.minArea * areaScale)));
+  const sizeScale = Math.max(w, h) / 1600;
+  removeSmallComponents(mask, w, h, Math.max(2, Math.round(th.minArea * sizeScale ** 2)));
 
-  // 5. 中心線モードでは、線を 1px の中心線まで細くしてから描き直す（太い線も細い線も同じ太さになる）
-  //    その前に、線の中の小さな白いすき間を埋めておく（埋めないと小さな輪っかが残る）
-  if (centerLine) {
-    const holes = new Uint8Array(n);
-    for (let i = 0; i < n; i++) holes[i] = mask[i] ? 0 : 1;
-    const before = holes.slice();
-    removeSmallComponents(holes, w, h, Math.round(Math.max(20, (lineRadius * 1.2) ** 2)));
-    for (let i = 0; i < n; i++) if (before[i] && !holes[i]) mask[i] = 1;
-    thin(mask, w, h);
-    // 輪郭から生えた短いヒゲ（ノイズ由来の枝）を取る
-    const spur = Math.round(clamp(lineRadius * 3, 8, 45));
-    pruneSpurs(mask, w, h, spur);
-    pruneSpurs(mask, w, h, spur);
-  }
+  // 5. 中心線モード: 太い線だけを中心線に置き換える。
+  //    目や口などの細い線はそのまま残し、太い輪郭線（白抜きの原因）だけ真ん中の 1 本にする
+  if (centerLine) replaceThickStrokesWithCenterLine(mask, w, h, lineRadius);
 
   // 6. 線を太らせる。距離変換を使うと丸いペンでなぞったような太り方になる
   const radius = centerLine ? centerRadiusFor(params.thickness, w, h) : radiusFor(params.thickness, w, h);
@@ -473,7 +553,7 @@ export function renderLineArt(maps: EdgeMaps, params: LineArtParams): Uint8Clamp
 
 /** 年齢別プリセット */
 export const PRESETS: Record<string, LineArtParams & { label: string }> = {
-  age3: { label: '3歳向け', thickness: 7, detail: 2 },
-  age5: { label: '5歳向け', thickness: 4, detail: 5 },
-  age8: { label: '8歳向け', thickness: 2, detail: 8 },
+  age3: { label: '3歳向け', thickness: 6, detail: 3 },
+  age5: { label: '5歳向け', thickness: 3, detail: 5 },
+  age8: { label: '8歳向け', thickness: 2, detail: 7 },
 };
