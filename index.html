@@ -58,20 +58,27 @@
       </section>
 
       <!-- 2. 調整して印刷 -->
-      <section id="editor" class="card" hidden>
-        <h2>② 調整して印刷</h2>
-
+      <section id="editor" class="card editor" hidden>
+        <div class="editor-layout">
+        <!-- プレビュー（パソコンは左側、スマホは画面の上に固定） -->
+        <div class="preview-pane">
         <div class="preview-wrap">
           <div id="sheet" class="sheet portrait">
             <canvas id="result-canvas" aria-label="塗り絵のプレビュー"></canvas>
             <canvas id="original-canvas" class="original" hidden aria-hidden="true"></canvas>
-            <div id="busy" class="busy" hidden><span class="spinner"></span>線画にしています…</div>
+            <div id="busy" class="busy" hidden><span class="spinner"></span><span class="busy-text">線画にしています…</span></div>
           </div>
           <div class="preview-buttons">
-            <button id="zoom-btn" class="btn btn-small" type="button">🔍 大きくして見る</button>
-            <button id="compare-btn" class="btn btn-small compare" type="button">👀 押している間、元の絵</button>
+            <button id="zoom-btn" class="btn btn-small" type="button">🔍 大きく<span class="pc-only">して</span>見る</button>
+            <button id="compare-btn" class="btn btn-small compare" type="button" aria-label="押している間、元の絵">👀 <span class="pc-only">押している間、</span><span class="sp-only">押すと</span>元の絵</button>
           </div>
         </div>
+        </div>
+
+        <!-- 設定（パソコンは右側、スマホはプレビューの下） -->
+        <div class="controls-pane">
+        <h2>② 調整して印刷</h2>
+        <p class="hint live-hint">動かすと、すぐ<span class="pc-only">左</span><span class="sp-only">上</span>の絵が変わります</p>
         <p id="editor-message" class="message" role="status" aria-live="polite"></p>
 
         <div class="controls">
@@ -132,6 +139,8 @@
         <p class="hint">
           印刷画面で「PDFとして保存」を選ぶと、コンビニのネットプリントにも使えます。
         </p>
+        </div>
+        </div>
       </section>
 
       <!-- 切り抜き -->
