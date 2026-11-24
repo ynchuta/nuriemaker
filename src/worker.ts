@@ -2,7 +2,7 @@
 import { computeEdgeMaps, renderLineArt, type EdgeMaps, type LineArtParams } from './lineart';
 
 export type WorkerRequest =
-  | { type: 'load'; id: number; width: number; height: number; pixels: ArrayBuffer }
+  | { type: 'load'; id: number; width: number; height: number; pixels: ArrayBuffer; sourceScale: number }
   | { type: 'render'; id: number; params: LineArtParams };
 
 export type WorkerResponse =
@@ -19,7 +19,7 @@ self.onmessage = (e: MessageEvent<WorkerRequest>) => {
   const msg = e.data;
   try {
     if (msg.type === 'load') {
-      maps = computeEdgeMaps(new Uint8ClampedArray(msg.pixels), msg.width, msg.height);
+      maps = computeEdgeMaps(new Uint8ClampedArray(msg.pixels), msg.width, msg.height, msg.sourceScale);
       post({ type: 'loaded', id: msg.id });
     } else if (msg.type === 'render') {
       if (!maps) throw new Error('画像がまだ読み込まれていません');

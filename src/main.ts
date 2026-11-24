@@ -26,6 +26,7 @@ const thicknessInput = $<HTMLInputElement>('thickness');
 const detailInput = $<HTMLInputElement>('detail');
 const thicknessOut = $<HTMLOutputElement>('thickness-out');
 const detailOut = $<HTMLOutputElement>('detail-out');
+const centerLineInput = $<HTMLInputElement>('center-line');
 const printBtn = $<HTMLButtonElement>('print-btn');
 const saveBtn = $<HTMLButtonElement>('save-btn');
 const cropBtn = $<HTMLButtonElement>('crop-btn');
@@ -59,7 +60,11 @@ let renderPending = false;
 let pendingLoadId = -1;
 
 function currentParams(): LineArtParams {
-  return { thickness: Number(thicknessInput.value), detail: Number(detailInput.value) };
+  return {
+    thickness: Number(thicknessInput.value),
+    detail: Number(detailInput.value),
+    centerLine: centerLineInput.checked,
+  };
 }
 
 function send(msg: WorkerRequest, transfer: Transferable[] = []) {
@@ -203,7 +208,7 @@ function prepareAndSend() {
   pendingLoadId = id;
   loadedId = -1;
   busy.hidden = false;
-  send({ type: 'load', id, width: w, height: h, pixels: data.data.buffer as ArrayBuffer }, [
+  send({ type: 'load', id, width: w, height: h, pixels: data.data.buffer as ArrayBuffer, sourceScale: scale }, [
     data.data.buffer as ArrayBuffer,
   ]);
 }
@@ -299,6 +304,8 @@ function updateOutputs() {
     btn.classList.toggle('active', preset.thickness === p.thickness && preset.detail === p.detail);
   });
 }
+
+centerLineInput.addEventListener('change', requestRender);
 
 for (const input of [thicknessInput, detailInput]) {
   input.addEventListener('input', () => {
