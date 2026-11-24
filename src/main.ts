@@ -21,6 +21,7 @@ const sheet = $<HTMLDivElement>('sheet');
 const resultCanvas = $<HTMLCanvasElement>('result-canvas');
 const originalCanvas = $<HTMLCanvasElement>('original-canvas');
 const busy = $<HTMLDivElement>('busy');
+const busyText = busy.querySelector<HTMLSpanElement>('.busy-text')!;
 const compareBtn = $<HTMLButtonElement>('compare-btn');
 const thicknessInput = $<HTMLInputElement>('thickness');
 const detailInput = $<HTMLInputElement>('detail');
@@ -82,8 +83,19 @@ function requestRender() {
   }
   renderInFlight = true;
   renderPending = false;
-  busy.hidden = false;
+  showBusy(lastResult !== null);
   send({ type: 'render', id: loadedId, params: currentParams() });
+}
+
+/**
+ * 処理中の表示。
+ * すでに線画があるとき（スライダーを動かしている最中など）は、絵を隠さないよう
+ * 角に小さく「なおしています」とだけ出す。
+ */
+function showBusy(soft: boolean) {
+  busy.classList.toggle('soft', soft);
+  busyText.textContent = soft ? 'なおしています…' : '線画にしています…';
+  busy.hidden = false;
 }
 
 worker.onmessage = (e: MessageEvent<WorkerResponse>) => {
@@ -316,7 +328,8 @@ function prepareAndSend() {
   const id = ++requestId;
   pendingLoadId = id;
   loadedId = -1;
-  busy.hidden = false;
+  lastResult = null; // 前の画像の線画で色の塗り直しをしないように
+  showBusy(false);
   send({ type: 'load', id, width: w, height: h, pixels: data.data.buffer as ArrayBuffer, sourceScale: scale }, [
     data.data.buffer as ArrayBuffer,
   ]);
@@ -511,6 +524,7 @@ saveBtn.addEventListener('click', async () => {
 // 画面の切り替え
 // ---------------------------------------------------------------------------
 function showEditor() {
+  document.body.classList.add('editing');
   startSection.hidden = true;
   cropSection.hidden = true;
   editorSection.hidden = false;
@@ -521,6 +535,7 @@ function showEditor() {
 resetBtn.addEventListener('click', () => {
   source = null;
   crop = null;
+  document.body.classList.remove('editing');
   editorSection.hidden = true;
   cropSection.hidden = true;
   startSection.hidden = false;
@@ -542,6 +557,7 @@ function openCrop() {
   cropCanvas.width = Math.round(sourceW / cropScale);
   cropCanvas.height = Math.round(sourceH / cropScale);
   cropDraft = crop ? { ...crop } : null;
+  document.body.classList.remove('editing');
   editorSection.hidden = true;
   cropSection.hidden = false;
   drawCrop();
