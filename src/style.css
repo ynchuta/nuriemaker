@@ -313,6 +313,25 @@ input[type='range'] {
   height: 32px;
 }
 
+.toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+.toggle input {
+  width: 24px;
+  height: 24px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+.toggle-hint {
+  display: block;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
 .actions {
   margin-top: 4px;
 }

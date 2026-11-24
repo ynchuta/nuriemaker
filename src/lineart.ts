@@ -2,37 +2,43 @@
 //
 // 流れ:
 //   1. 色を少しぼかしてノイズや JPEG のモヤを消す
-//   2. 「線らしさ」を 3 種類の手がかりで拾う
-//        - DoG（ぼかし幅の違う 2 枚の差）: 周りより暗い細い線
-//        - 色の境目（Sobel）: 線が描かれていない色の切り替わり
-//        - 暗い領域の縁: 太い黒線はそのまま、黒く塗られた広い面（髪や影）は輪郭だけ
+//   2. 「線らしさ」を 2 種類の手がかりで拾う
+//        - 周りより暗い細い部分（ブラックトップハット）: 描かれた線。背景が赤や黒でも、
+//          「その場所の周りと比べてどれだけ暗いか」で見るので、暗い色の面そのものは線にならない
+//        - 色の境目（Sobel）: 線が描かれていない色の切り替わり（髪と背景の境目など）
 //   3. しきい値で白黒にする（「細かさ」）
 //   4. 小さな黒い点を消す
-//   5. 線を太らせる（「線の太さ」）
+//   5. （中心線モード）線を 1px の中心線まで細くする
+//   6. 線を太らせる（「線の太さ」）
 
 export interface LineArtParams {
   /** 線の太さ 1〜10 */
   thickness: number;
   /** 細かさ 1〜10（大きいほど細かい線まで残す） */
   detail: number;
+  /**
+   * 太い輪郭線を白抜きにせず、線の中心を取り出して「線の太さ」で描き直す（初期値 true）。
+   * false のときは見つけた線をそのまま太らせる。
+   */
+  centerLine?: boolean;
 }
 
 /** 画像から一度だけ計算しておけば、スライダー操作のたびに使い回せる中間データ */
 export interface EdgeMaps {
   width: number;
   height: number;
-  /** DoG 応答（周りより暗いほど大きい、0〜255 程度） */
-  dog: Float32Array;
-  /** 色の境目の強さ（0〜1020 程度） */
+  /** 線らしさ（周りの明るさに比べてどれだけ暗いか、0〜255） */
+  line: Float32Array;
+  /** 色の境目の強さ（0〜1020 程度、境目の中心だけ） */
   colorEdge: Float32Array;
-  /** 暗い領域の縁（0/1）。暗さのしきい値ごとに用意 */
-  darkOutline: Uint8Array[];
+  /** 線とみなす最大の太さの半分（作業用画像の px） */
+  lineRadius: number;
 }
 
-/** 暗い領域とみなす明るさの候補（細かさに応じて選ぶ） */
-const DARK_LEVELS = [60, 75, 90, 105];
-/** 黒く塗られた面の輪郭として残す幅（px） */
-const DARK_BAND = 3;
+/** 元画像で、1 本の線とみなす太さの半分（px） */
+const LINE_HALF_WIDTH_SOURCE = 4;
+/** 強い線につながっていれば残す、弱い線のしきい値の割合 */
+const WEAK_RATIO = 0.45;
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
@@ -158,11 +164,40 @@ export function removeSmallComponents(mask: Uint8Array, w: number, h: number, mi
   }
 }
 
+/** 1 次元の最大値／最小値フィルタ（van Herk / Gil-Werman 法、半径 r） */
+function minMax1D(src: Float32Array, dst: Float32Array, len: number, offset: number, stride: number, r: number, isMax: boolean) {
+  const k = 2 * r + 1;
+  const n = len + 2 * r;
+  const ext = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const j = Math.min(len - 1, Math.max(0, i - r));
+    ext[i] = src[offset + j * stride];
+  }
+  const g = new Float32Array(n);
+  const hbuf = new Float32Array(n);
+  const pick = isMax ? Math.max : Math.min;
+  for (let i = 0; i < n; i++) g[i] = i % k === 0 ? ext[i] : pick(g[i - 1], ext[i]);
+  for (let i = n - 1; i >= 0; i--) hbuf[i] = i % k === k - 1 || i === n - 1 ? ext[i] : pick(hbuf[i + 1], ext[i]);
+  for (let x = 0; x < len; x++) {
+    // 窓 [x, x + 2r]（ext 上）
+    dst[offset + x * stride] = pick(hbuf[x], g[x + 2 * r]);
+  }
+}
+
+/** 正方形の窓での最大値／最小値フィルタ */
+export function rankFilter(src: Float32Array, w: number, h: number, r: number, isMax: boolean): Float32Array {
+  const tmp = new Float32Array(w * h);
+  const out = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) minMax1D(src, tmp, w, y * w, 1, r, isMax);
+  for (let x = 0; x < w; x++) minMax1D(tmp, out, h, x, w, r, isMax);
+  return out;
+}
+
 /**
  * RGBA 画像から中間データを作る。重い処理はここに集めてあり、画像ごとに 1 回だけ呼ぶ。
- * 透明な部分は白として扱う。
+ * 透明な部分は白として扱う。sourceScale は元画像 1px が作業用画像で何 px になったか。
  */
-export function computeEdgeMaps(rgba: Uint8ClampedArray, w: number, h: number): EdgeMaps {
+export function computeEdgeMaps(rgba: Uint8ClampedArray, w: number, h: number, sourceScale = 1): EdgeMaps {
   const n = w * h;
   const r = new Float32Array(n);
   const g = new Float32Array(n);
@@ -175,22 +210,22 @@ export function computeEdgeMaps(rgba: Uint8ClampedArray, w: number, h: number): 
   }
 
   // 1. ごく弱くぼかす
-  const rb = gaussianBlur(r, w, h, 0.8);
-  const gb = gaussianBlur(g, w, h, 0.8);
-  const bb = gaussianBlur(b, w, h, 0.8);
+  const blurSigma = clamp(0.5 * sourceScale, 0.7, 1.6);
+  const rb = gaussianBlur(r, w, h, blurSigma);
+  const gb = gaussianBlur(g, w, h, blurSigma);
+  const bb = gaussianBlur(b, w, h, blurSigma);
   const gray = new Float32Array(n);
   for (let i = 0; i < n; i++) gray[i] = 0.299 * rb[i] + 0.587 * gb[i] + 0.114 * bb[i];
 
-  // 2a. DoG: 広くぼかした画像 − 狭くぼかした画像。暗い線の上で正の値になる
-  //     太い線（拡大したスクショなど）も拾えるよう、細かいものと粗いものの 2 段階で見る
-  const g1 = gaussianBlur(gray, w, h, 1.0);
-  const g2 = gaussianBlur(gray, w, h, 2.2);
-  const g3 = gaussianBlur(gray, w, h, 4.8);
-  const dog = new Float32Array(n);
+  // 2a. ブラックトップハット: 「線の太さより広い範囲での明るさ（クロージング）」と自分の差。
+  //     線より広い暗い面（黒髪・赤い背景など）は差が 0 になるので線にならない。
+  //     暗い背景の上の線も拾えるよう、周りの明るさで割って比率にする。
+  const lineRadius = Math.round(clamp(LINE_HALF_WIDTH_SOURCE * sourceScale, 3, 16));
+  const closed = rankFilter(rankFilter(gray, w, h, lineRadius, true), w, h, lineRadius, false);
+  const line = new Float32Array(n);
   for (let i = 0; i < n; i++) {
-    const fine = g2[i] - g1[i];
-    const coarse = (g3[i] - g2[i]) * 0.8;
-    dog[i] = Math.max(0, fine, coarse);
+    const c = closed[i];
+    line[i] = Math.max(0, ((c - gray[i]) / Math.max(c, 110)) * 255);
   }
 
   // 2b. 色の境目: RGB それぞれの Sobel の強さの最大値
@@ -224,27 +259,15 @@ export function computeEdgeMaps(rgba: Uint8ClampedArray, w: number, h: number): 
     }
   }
 
-  // 2c. 暗い領域の縁: 暗い画素のうち、明るい画素から DARK_BAND 以内のものだけ残す
-  //     → 細い黒線は丸ごと、黒い面は輪郭の帯だけになる
-  const darkOutline = DARK_LEVELS.map((level) => {
-    const light = new Uint8Array(n);
-    for (let i = 0; i < n; i++) light[i] = gray[i] >= level ? 1 : 0;
-    const distToLight = distanceTransform(light, w, h);
-    const out = new Uint8Array(n);
-    for (let i = 0; i < n; i++) out[i] = !light[i] && distToLight[i] <= DARK_BAND ? 1 : 0;
-    return out;
-  });
-
-  return { width: w, height: h, dog, colorEdge: thinEdge, darkOutline };
+  return { width: w, height: h, line, colorEdge: thinEdge, lineRadius };
 }
 
 /** 細かさ 1〜10 からしきい値類を決める */
 export function thresholdsFor(detail: number) {
   const t = clamp((detail - 1) / 9, 0, 1);
   return {
-    dogThreshold: lerp(16, 3.5, t),
-    colorThreshold: lerp(520, 150, t),
-    darkLevelIndex: Math.round(lerp(0, DARK_LEVELS.length - 1, t)),
+    lineThreshold: lerp(80, 16, t),
+    colorThreshold: lerp(480, 140, t),
     minArea: Math.round(lerp(160, 30, t)),
   };
 }
@@ -256,19 +279,154 @@ export function radiusFor(thickness: number, width: number, height: number): num
   return (clamp(thickness, 1, 10) - 1) * 0.75 * scale;
 }
 
+/** 中心線モードの線の半径（px）。中心線は 1px なので、太さ 1 でも見える太さから始める */
+export function centerRadiusFor(thickness: number, width: number, height: number): number {
+  const scale = Math.max(width, height) / 1600;
+  return (1.2 + (clamp(thickness, 1, 10) - 1) * 0.8) * scale;
+}
+
+/**
+ * Zhang-Suen 法による細線化。黒画素（1）の線を、つながりを保ったまま幅 1px の中心線にする（mask を直接書き換える）。
+ */
+export function thin(mask: Uint8Array, w: number, h: number): void {
+  // 端の 1px は扱いを簡単にするため白にする
+  for (let x = 0; x < w; x++) {
+    mask[x] = 0;
+    mask[(h - 1) * w + x] = 0;
+  }
+  for (let y = 0; y < h; y++) {
+    mask[y * w] = 0;
+    mask[y * w + w - 1] = 0;
+  }
+  // 調べる候補（黒画素）の一覧。消えた画素は次の回から外す
+  let candidates: number[] = [];
+  for (let i = 0; i < mask.length; i++) if (mask[i]) candidates.push(i);
+  const toDelete: number[] = [];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let step = 0; step < 2; step++) {
+      toDelete.length = 0;
+      for (const i of candidates) {
+        if (!mask[i]) continue;
+        // 近傍 P2..P9（上から時計回り）
+        const p2 = mask[i - w], p3 = mask[i - w + 1], p4 = mask[i + 1], p5 = mask[i + w + 1];
+        const p6 = mask[i + w], p7 = mask[i + w - 1], p8 = mask[i - 1], p9 = mask[i - w - 1];
+        const b = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9;
+        if (b < 2 || b > 6) continue;
+        const a =
+          (!p2 && p3 ? 1 : 0) + (!p3 && p4 ? 1 : 0) + (!p4 && p5 ? 1 : 0) + (!p5 && p6 ? 1 : 0) +
+          (!p6 && p7 ? 1 : 0) + (!p7 && p8 ? 1 : 0) + (!p8 && p9 ? 1 : 0) + (!p9 && p2 ? 1 : 0);
+        if (a !== 1) continue;
+        if (step === 0) {
+          if (p2 && p4 && p6) continue;
+          if (p4 && p6 && p8) continue;
+        } else {
+          if (p2 && p4 && p8) continue;
+          if (p2 && p6 && p8) continue;
+        }
+        toDelete.push(i);
+      }
+      if (toDelete.length) {
+        changed = true;
+        for (const i of toDelete) mask[i] = 0;
+      }
+    }
+    if (changed) candidates = candidates.filter((i) => mask[i] === 1);
+  }
+}
+
+/**
+ * 1px の中心線から、分かれ道から伸びた maxLen px 未満の短い枝を取り除く（mask を直接書き換える）。
+ * 分かれ道につながっていない線（1 本だけの線）は残す。
+ */
+export function pruneSpurs(mask: Uint8Array, w: number, h: number, maxLen: number): void {
+  const offsets = [-w - 1, -w, -w + 1, -1, 1, w - 1, w, w + 1];
+  const neighbors = (i: number, out: number[]) => {
+    out.length = 0;
+    const x = i % w;
+    for (const o of offsets) {
+      const j = i + o;
+      if (j < 0 || j >= w * h) continue;
+      const xx = j % w;
+      if (Math.abs(xx - x) > 1) continue;
+      if (mask[j]) out.push(j);
+    }
+    return out;
+  };
+  const nb: number[] = [];
+  const endpoints: number[] = [];
+  for (let i = 0; i < mask.length; i++) if (mask[i] && neighbors(i, nb).length === 1) endpoints.push(i);
+  const onPath = new Uint8Array(mask.length);
+  for (const start of endpoints) {
+    if (!mask[start]) continue;
+    const path = [start];
+    onPath[start] = 1;
+    let cur = start;
+    let reachedJunction = false;
+    while (path.length < maxLen) {
+      const next = neighbors(cur, nb).filter((j) => !onPath[j]);
+      if (next.length === 0) break; // 線の反対の端まで来た
+      // 今いる画素以外に 2 方向以上へ分かれていたら分かれ道
+      if (next.length >= 2 && path.length > 1) {
+        reachedJunction = true;
+        break;
+      }
+      if (next.length >= 2) break;
+      cur = next[0];
+      if (neighbors(cur, nb).length >= 3) {
+        reachedJunction = true;
+        break;
+      }
+      path.push(cur);
+      onPath[cur] = 1;
+    }
+    for (const i of path) onPath[i] = 0;
+    if (reachedJunction && path.length < maxLen) for (const i of path) mask[i] = 0;
+  }
+}
+
 /**
  * 中間データとパラメータから線画を作る。戻り値は RGBA（白地に黒線、縁は少しなめらか）。
  */
 export function renderLineArt(maps: EdgeMaps, params: LineArtParams): Uint8ClampedArray {
-  const { width: w, height: h, dog, colorEdge, darkOutline } = maps;
+  const { width: w, height: h, line, colorEdge, lineRadius } = maps;
   const n = w * h;
   const th = thresholdsFor(params.detail);
-  const dark = darkOutline[th.darkLevelIndex];
+  const centerLine = params.centerLine ?? true;
 
-  // 3. 白黒にする
+  // 3. 白黒にする。はっきりした線（強）から、つながっている薄めの線（弱）までたどって残す
+  //    （ヒステリシスしきい値。線が途切れ途切れになるのを防ぐ）
   const mask = new Uint8Array(n);
+  const weak = new Uint8Array(n);
+  const stack: number[] = [];
   for (let i = 0; i < n; i++) {
-    if (dog[i] > th.dogThreshold || colorEdge[i] > th.colorThreshold || dark[i]) mask[i] = 1;
+    const l = line[i];
+    const c = colorEdge[i];
+    if (l > th.lineThreshold || c > th.colorThreshold) {
+      mask[i] = 1;
+      stack.push(i);
+    } else if (l > th.lineThreshold * WEAK_RATIO || c > th.colorThreshold * WEAK_RATIO) {
+      weak[i] = 1;
+    }
+  }
+  while (stack.length) {
+    const i = stack.pop()!;
+    const x = i % w;
+    const y = (i - x) / w;
+    for (let dy = -1; dy <= 1; dy++) {
+      const yy = y + dy;
+      if (yy < 0 || yy >= h) continue;
+      for (let dx = -1; dx <= 1; dx++) {
+        const xx = x + dx;
+        if (xx < 0 || xx >= w) continue;
+        const j = yy * w + xx;
+        if (weak[j] && !mask[j]) {
+          mask[j] = 1;
+          stack.push(j);
+        }
+      }
+    }
   }
   // 画像の外周 2px は誤検出が多いので消す
   for (let x = 0; x < w; x++) {
@@ -282,8 +440,23 @@ export function renderLineArt(maps: EdgeMaps, params: LineArtParams): Uint8Clamp
   const areaScale = (Math.max(w, h) / 1600) ** 2;
   removeSmallComponents(mask, w, h, Math.max(2, Math.round(th.minArea * areaScale)));
 
-  // 5. 線を太らせる。距離変換を使うと丸いペンでなぞったような太り方になる
-  const radius = radiusFor(params.thickness, w, h);
+  // 5. 中心線モードでは、線を 1px の中心線まで細くしてから描き直す（太い線も細い線も同じ太さになる）
+  //    その前に、線の中の小さな白いすき間を埋めておく（埋めないと小さな輪っかが残る）
+  if (centerLine) {
+    const holes = new Uint8Array(n);
+    for (let i = 0; i < n; i++) holes[i] = mask[i] ? 0 : 1;
+    const before = holes.slice();
+    removeSmallComponents(holes, w, h, Math.round(Math.max(20, (lineRadius * 1.2) ** 2)));
+    for (let i = 0; i < n; i++) if (before[i] && !holes[i]) mask[i] = 1;
+    thin(mask, w, h);
+    // 輪郭から生えた短いヒゲ（ノイズ由来の枝）を取る
+    const spur = Math.round(clamp(lineRadius * 3, 8, 45));
+    pruneSpurs(mask, w, h, spur);
+    pruneSpurs(mask, w, h, spur);
+  }
+
+  // 6. 線を太らせる。距離変換を使うと丸いペンでなぞったような太り方になる
+  const radius = centerLine ? centerRadiusFor(params.thickness, w, h) : radiusFor(params.thickness, w, h);
   const dist = distanceTransform(mask, w, h);
   const out = new Uint8ClampedArray(n * 4);
   for (let i = 0; i < n; i++) {
