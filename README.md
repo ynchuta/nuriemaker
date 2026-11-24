@@ -18,6 +18,7 @@
 npm install
 npm run dev      # http://localhost:5173 で起動
 npm test         # 線画化処理のテスト
+npm run linecheck  # お手本画像を変更前・変更後で変換して比較画像を作る（docs/線画チェック.md）
 npm run build    # dist/ に公開用ファイルを作成
 ```
 
@@ -31,6 +32,7 @@ npm run build    # dist/ に公開用ファイルを作成
 - `src/lineart.ts` … 線画化の処理（周りより暗い細い部分＝描かれた線の抽出、色の境目、途切れた線をつなぐヒステリシス、ゴミ取り、細線化とヒゲ取り、線の太らせ）
 - `src/worker.ts` … 画面が固まらないよう、線画化を Web Worker で実行
 - `src/main.ts` … 画面の操作（貼り付け、切り抜き、印刷、保存）
+- `tools/linecheck/` … 線画の出来を確かめる道具（お手本画像、採点、比較画像づくり）
 
 ## ご注意
 

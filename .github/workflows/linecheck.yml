@@ -1,0 +1,36 @@
+name: 線画チェック（比較画像）
+
+# 線画化のコードが変わった PR で、お手本画像を「main の版」と「PR の版」で変換して並べた比較画像を作る。
+# 結果は実行ページの Summary に数字の表、Artifacts の「linecheck」に比較画像が入る。
+on:
+  pull_request:
+    paths:
+      - 'src/lineart.ts'
+      - 'src/main.ts'
+      - 'tools/linecheck/**'
+      - '.github/workflows/linecheck.yml'
+  workflow_dispatch:
+
+jobs:
+  linecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 変更前（main）の版を読むため
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: 比較画像を作る
+        run: npm run linecheck -- --base origin/${{ github.base_ref || 'main' }}
+      - name: 結果の表を Summary に出す
+        if: always()
+        run: cat linecheck-output/summary.md >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linecheck
+          path: linecheck-output
+          retention-days: 30

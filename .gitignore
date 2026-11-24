@@ -1,3 +1,7 @@
 node_modules
 dist
 .DS_Store
+linecheck-output
+tools/linecheck/.tmp
+test-images/private/*
+!test-images/private/README.md
