@@ -67,11 +67,28 @@
             <canvas id="original-canvas" class="original" hidden aria-hidden="true"></canvas>
             <div id="busy" class="busy" hidden><span class="spinner"></span>線画にしています…</div>
           </div>
-          <button id="compare-btn" class="btn btn-small compare" type="button">👀 押している間、元の絵</button>
+          <div class="preview-buttons">
+            <button id="zoom-btn" class="btn btn-small" type="button">🔍 大きくして見る</button>
+            <button id="compare-btn" class="btn btn-small compare" type="button">👀 押している間、元の絵</button>
+          </div>
         </div>
         <p id="editor-message" class="message" role="status" aria-live="polite"></p>
 
         <div class="controls">
+          <div class="colors" role="group" aria-label="線の色">
+            <span class="label">せんの いろ</span>
+            <div class="swatches">
+              <button class="swatch" type="button" data-line-color="#000000" style="--c: #000000" aria-pressed="true"><span class="dot"></span>くろ</button>
+              <button class="swatch" type="button" data-line-color="#7a7a7a" style="--c: #7a7a7a" aria-pressed="false"><span class="dot"></span>はいいろ</button>
+              <button class="swatch" type="button" data-line-color="#1e5fd6" style="--c: #1e5fd6" aria-pressed="false"><span class="dot"></span>あお</button>
+              <button class="swatch" type="button" data-line-color="#e02b2b" style="--c: #e02b2b" aria-pressed="false"><span class="dot"></span>あか</button>
+              <button class="swatch" type="button" data-line-color="#1f9a3c" style="--c: #1f9a3c" aria-pressed="false"><span class="dot"></span>みどり</button>
+              <button class="swatch" type="button" data-line-color="#f08a00" style="--c: #f08a00" aria-pressed="false"><span class="dot"></span>オレンジ</button>
+              <button class="swatch" type="button" data-line-color="#8a3fc4" style="--c: #8a3fc4" aria-pressed="false"><span class="dot"></span>むらさき</button>
+              <button class="swatch" type="button" data-line-color="#e8559a" style="--c: #e8559a" aria-pressed="false"><span class="dot"></span>ピンク</button>
+              <button class="swatch" type="button" data-line-color="#7b4a1e" style="--c: #7b4a1e" aria-pressed="false"><span class="dot"></span>ちゃいろ</button>
+            </div>
+          </div>
           <div class="presets" role="group" aria-label="年齢別のおすすめ">
             <span class="label">おすすめ</span>
             <button class="btn btn-chip" type="button" data-preset="age3">3歳向け</button>
@@ -134,6 +151,18 @@
       <footer class="site-footer">
         <p>ぬりえメーカー · 画像は端末内で処理されます</p>
       </footer>
+    </div>
+
+    <!-- 拡大表示 -->
+    <div id="zoom" class="zoom no-print" hidden role="dialog" aria-label="大きくして見る">
+      <div class="zoom-bar">
+        <button id="zoom-out" class="btn zoom-round" type="button" aria-label="小さく">－</button>
+        <span id="zoom-level" class="zoom-level">2ばい</span>
+        <button id="zoom-in" class="btn zoom-round" type="button" aria-label="大きく">＋</button>
+        <button id="zoom-close" class="btn btn-primary" type="button">✕ とじる</button>
+      </div>
+      <div id="zoom-scroller" class="zoom-scroller"><img id="zoom-img" alt="塗り絵を大きくしたもの" draggable="false" /></div>
+      <p class="zoom-hint">指やマウスで動かして、線のようすを確かめてね</p>
     </div>
 
     <!-- 印刷用（画面には出ない） -->

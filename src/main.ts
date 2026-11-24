@@ -116,13 +116,122 @@ worker.onerror = () => {
   editorMessage.textContent = 'このブラウザでは処理できませんでした。別のブラウザでお試しください。';
 };
 
+// 線画の元データ（白黒）。線の色を変えるときは、これに色を付け直すだけで済む
+let lastResult: { w: number; h: number; pixels: Uint8ClampedArray } | null = null;
+
 function drawResult(w: number, h: number, pixels: ArrayBuffer) {
-  resultCanvas.width = w;
-  resultCanvas.height = h;
-  const ctx = resultCanvas.getContext('2d')!;
-  ctx.putImageData(new ImageData(new Uint8ClampedArray(pixels), w, h), 0, 0);
+  lastResult = { w, h, pixels: new Uint8ClampedArray(pixels) };
+  paintResult();
   editorMessage.textContent = '';
 }
+
+/** 白黒の線画に、選んだ線の色を付けてキャンバスに描く */
+function paintResult() {
+  if (!lastResult) return;
+  const { w, h, pixels } = lastResult;
+  const [cr, cg, cbl] = lineColor;
+  const out = new Uint8ClampedArray(pixels.length);
+  for (let i = 0; i < pixels.length; i += 4) {
+    const ink = 1 - pixels[i] / 255; // 0 = 白、1 = 線
+    out[i] = 255 - (255 - cr) * ink;
+    out[i + 1] = 255 - (255 - cg) * ink;
+    out[i + 2] = 255 - (255 - cbl) * ink;
+    out[i + 3] = 255;
+  }
+  resultCanvas.width = w;
+  resultCanvas.height = h;
+  resultCanvas.getContext('2d')!.putImageData(new ImageData(out, w, h), 0, 0);
+  if (!zoomOverlay.hidden) refreshZoomImage();
+}
+
+// ---------------------------------------------------------------------------
+// 線の色
+// ---------------------------------------------------------------------------
+let lineColor: [number, number, number] = [0, 0, 0];
+document.querySelectorAll<HTMLButtonElement>('[data-line-color]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const hex = btn.dataset.lineColor!;
+    lineColor = [1, 3, 5].map((k) => parseInt(hex.slice(k, k + 2), 16)) as [number, number, number];
+    document.querySelectorAll('[data-line-color]').forEach((b) => b.setAttribute('aria-pressed', String(b === btn)));
+    paintResult();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 拡大して確認
+// ---------------------------------------------------------------------------
+const zoomOverlay = $<HTMLDivElement>('zoom');
+const zoomScroller = $<HTMLDivElement>('zoom-scroller');
+const zoomImg = $<HTMLImageElement>('zoom-img');
+const zoomLevelOut = $<HTMLSpanElement>('zoom-level');
+const ZOOM_STEPS = [1, 1.5, 2, 3, 4, 6];
+let zoomIndex = 2;
+
+function refreshZoomImage() {
+  zoomImg.src = resultCanvas.toDataURL('image/png');
+}
+
+function applyZoom(keepCenter = true) {
+  const scroller = zoomScroller;
+  // 拡大の前後で、見ている場所の中心がずれないようにする
+  const cx = (scroller.scrollLeft + scroller.clientWidth / 2) / Math.max(1, scroller.scrollWidth);
+  const cy = (scroller.scrollTop + scroller.clientHeight / 2) / Math.max(1, scroller.scrollHeight);
+  const z = ZOOM_STEPS[zoomIndex];
+  // 「1倍」= 画面の幅にちょうど収まる大きさ
+  const fitW = scroller.clientWidth - 16;
+  const fitH = scroller.clientHeight - 16;
+  const fit = Math.min(fitW / resultCanvas.width, fitH / resultCanvas.height);
+  zoomImg.style.width = `${Math.round(resultCanvas.width * fit * z)}px`;
+  zoomLevelOut.textContent = `${z}ばい`;
+  if (keepCenter) {
+    scroller.scrollLeft = cx * scroller.scrollWidth - scroller.clientWidth / 2;
+    scroller.scrollTop = cy * scroller.scrollHeight - scroller.clientHeight / 2;
+  }
+}
+
+$<HTMLButtonElement>('zoom-btn').addEventListener('click', () => {
+  refreshZoomImage();
+  zoomOverlay.hidden = false;
+  document.body.classList.add('no-scroll');
+  zoomIndex = 2;
+  applyZoom(false);
+  // 真ん中あたりから見せる
+  zoomScroller.scrollLeft = (zoomScroller.scrollWidth - zoomScroller.clientWidth) / 2;
+  zoomScroller.scrollTop = (zoomScroller.scrollHeight - zoomScroller.clientHeight) / 2;
+});
+$<HTMLButtonElement>('zoom-in').addEventListener('click', () => {
+  zoomIndex = Math.min(ZOOM_STEPS.length - 1, zoomIndex + 1);
+  applyZoom();
+});
+$<HTMLButtonElement>('zoom-out').addEventListener('click', () => {
+  zoomIndex = Math.max(0, zoomIndex - 1);
+  applyZoom();
+});
+$<HTMLButtonElement>('zoom-close').addEventListener('click', () => {
+  zoomOverlay.hidden = true;
+  document.body.classList.remove('no-scroll');
+});
+
+// 指やマウスでつかんで動かす
+let pan: { x: number; y: number; left: number; top: number; id: number } | null = null;
+zoomScroller.addEventListener('pointerdown', (e) => {
+  if (e.pointerType === 'touch') return; // スマホは標準のスクロールに任せる
+  pan = { x: e.clientX, y: e.clientY, left: zoomScroller.scrollLeft, top: zoomScroller.scrollTop, id: e.pointerId };
+  zoomScroller.setPointerCapture(e.pointerId);
+});
+zoomScroller.addEventListener('pointermove', (e) => {
+  if (!pan || e.pointerId !== pan.id) return;
+  zoomScroller.scrollLeft = pan.left - (e.clientX - pan.x);
+  zoomScroller.scrollTop = pan.top - (e.clientY - pan.y);
+});
+const endPan = () => {
+  pan = null;
+};
+zoomScroller.addEventListener('pointerup', endPan);
+zoomScroller.addEventListener('pointercancel', endPan);
+window.addEventListener('resize', () => {
+  if (!zoomOverlay.hidden) applyZoom();
+});
 
 // ---------------------------------------------------------------------------
 // 画像の読み込み
