@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#ff8a3d" />
+    <meta name="description" content="スクショや画像を貼るだけで、子ども向けの塗り絵をA4で印刷できます。画像は端末の中だけで処理されます。" />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./favicon.svg" />
+    <title>ぬりえメーカー</title>
+  </head>
+  <body>
+    <div id="app" class="no-print">
+      <header class="site-header">
+        <h1><span aria-hidden="true">🖍️</span> ぬりえメーカー</h1>
+        <p class="lead">画像を入れるだけで、塗り絵にしてA4で印刷できます。</p>
+      </header>
+
+      <!-- 1. 画像を入れる -->
+      <section id="start" class="card">
+        <h2>① 画像を入れる</h2>
+
+        <div
+          id="paste-box"
+          class="paste-box"
+          contenteditable="true"
+          inputmode="none"
+          role="textbox"
+          aria-label="ここに画像を貼り付け"
+          spellcheck="false"
+        ></div>
+        <p class="paste-help">
+          スマホ：上の枠を<strong>長押し</strong>して「ペースト」<br />
+          パソコン：<kbd>Ctrl</kbd>+<kbd>V</kbd>（Macは <kbd>⌘</kbd>+<kbd>V</kbd>）でも貼れます
+        </p>
+
+        <div class="button-row">
+          <button id="clipboard-btn" class="btn" type="button" hidden>📋 コピーした画像を貼る</button>
+          <label class="btn btn-primary" for="file-input">🖼️ 写真・画像を選ぶ</label>
+          <input id="file-input" type="file" accept="image/*" hidden />
+        </div>
+        <p class="hint drop-hint">画像をこの画面にドラッグ＆ドロップしてもOKです。</p>
+
+        <p id="start-message" class="message" role="status" aria-live="polite"></p>
+
+        <details class="tips">
+          <summary>うまく使うコツ</summary>
+          <ul>
+            <li>キャラクターが<strong>大きく</strong>、背景がすっきりした画像ほどきれいな塗り絵になります。</li>
+            <li>サイトの画像は、長押し（PCは右クリック）→「コピー」でそのまま貼れます。だめならスクショでもOK。</li>
+            <li>線がごちゃごちゃする時は「細かさ」を下げる、線が途切れる時は上げてください。</li>
+          </ul>
+        </details>
+        <p class="hint privacy">
+          🔒 画像はこの端末の中だけで処理され、インターネットには送られません。<br />
+          作った塗り絵は、ご家庭で楽しむ範囲でお使いください（SNSへの投稿や配布は控えましょう）。
+        </p>
+      </section>
+
+      <!-- 2. 調整して印刷 -->
+      <section id="editor" class="card" hidden>
+        <h2>② 調整して印刷</h2>
+
+        <div class="preview-wrap">
+          <div id="sheet" class="sheet portrait">
+            <canvas id="result-canvas" aria-label="塗り絵のプレビュー"></canvas>
+            <canvas id="original-canvas" class="original" hidden aria-hidden="true"></canvas>
+            <div id="busy" class="busy" hidden><span class="spinner"></span>線画にしています…</div>
+          </div>
+          <button id="compare-btn" class="btn btn-small compare" type="button">👀 押している間、元の絵</button>
+        </div>
+        <p id="editor-message" class="message" role="status" aria-live="polite"></p>
+
+        <div class="controls">
+          <div class="presets" role="group" aria-label="年齢別のおすすめ">
+            <span class="label">おすすめ</span>
+            <button class="btn btn-chip" type="button" data-preset="age3">3歳向け</button>
+            <button class="btn btn-chip" type="button" data-preset="age5">5歳向け</button>
+            <button class="btn btn-chip" type="button" data-preset="age8">8歳向け</button>
+          </div>
+
+          <label class="slider">
+            <span class="label">線の太さ <output id="thickness-out">4</output></span>
+            <span class="slider-row">
+              <span class="end">細い</span>
+              <input id="thickness" type="range" min="1" max="10" step="1" value="4" />
+              <span class="end">太い</span>
+            </span>
+          </label>
+
+          <label class="slider">
+            <span class="label">細かさ <output id="detail-out">5</output></span>
+            <span class="slider-row">
+              <span class="end">すっきり</span>
+              <input id="detail" type="range" min="1" max="10" step="1" value="5" />
+              <span class="end">細かく</span>
+            </span>
+          </label>
+        </div>
+
+        <div class="button-row actions">
+          <button id="print-btn" class="btn btn-primary btn-big" type="button">🖨️ A4で印刷</button>
+          <button id="save-btn" class="btn" type="button">💾 画像を保存</button>
+          <button id="crop-btn" class="btn" type="button">✂️ 切り抜く</button>
+          <button id="reset-btn" class="btn" type="button">↩️ 別の画像にする</button>
+        </div>
+        <p class="hint">
+          印刷画面で「PDFとして保存」を選ぶと、コンビニのネットプリントにも使えます。
+        </p>
+      </section>
+
+      <!-- 切り抜き -->
+      <section id="crop" class="card" hidden>
+        <h2>✂️ 切り抜く</h2>
+        <p class="hint">塗り絵にしたい部分を、指（マウス）でなぞって<strong>四角で囲んで</strong>ください。</p>
+        <div class="crop-wrap">
+          <canvas id="crop-canvas"></canvas>
+        </div>
+        <div class="button-row">
+          <button id="crop-apply" class="btn btn-primary" type="button">この範囲にする</button>
+          <button id="crop-full" class="btn" type="button">全体に戻す</button>
+          <button id="crop-cancel" class="btn" type="button">やめる</button>
+        </div>
+      </section>
+
+      <footer class="site-footer">
+        <p>ぬりえメーカー · 画像は端末内で処理されます</p>
+      </footer>
+    </div>
+
+    <!-- 印刷用（画面には出ない） -->
+    <div id="print-area" class="print-only"><img id="print-img" alt="" /></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
