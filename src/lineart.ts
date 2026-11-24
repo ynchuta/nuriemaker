@@ -228,9 +228,20 @@ export function computeEdgeMaps(rgba: Uint8ClampedArray, w: number, h: number, s
     line[i] = Math.max(0, ((c - gray[i]) / Math.max(c, 110)) * 255);
   }
 
-  // 2b. 色の境目: RGB それぞれの Sobel の強さの最大値
+  // 2b. 色の境目: 「色み」だけの Sobel。明るさで割った色み（色相と鮮やかさ）を使うので、
+  //     同じ色の影やハイライト（明るさだけが変わる境目）は線にならず、違う色どうしの境目だけが残る
+  const ca = new Float32Array(n);
+  const cb = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const inten = Math.max((rb[i] + gb[i] + bb[i]) / 3, 60);
+    ca[i] = ((rb[i] - gb[i]) / inten) * 128;
+    cb[i] = ((rb[i] + gb[i] - 2 * bb[i]) / (2 * inten)) * 128;
+  }
+  //     明るさの差も、黒髪と明るい背景のようなはっきりした差だけ拾えるよう重みを下げて加える
+  const lum = new Float32Array(n);
+  for (let i = 0; i < n; i++) lum[i] = gray[i] * 0.7;
   const colorEdge = new Float32Array(n);
-  const chans = [rb, gb, bb];
+  const chans = [ca, cb, lum];
   for (let y = 1; y < h - 1; y++) {
     for (let x = 1; x < w - 1; x++) {
       const i = y * w + x;
@@ -266,8 +277,8 @@ export function computeEdgeMaps(rgba: Uint8ClampedArray, w: number, h: number, s
 export function thresholdsFor(detail: number) {
   const t = clamp((detail - 1) / 9, 0, 1);
   return {
-    lineThreshold: lerp(80, 16, t),
-    colorThreshold: lerp(480, 140, t),
+    lineThreshold: lerp(110, 35, t),
+    colorThreshold: lerp(620, 220, t),
     minArea: Math.round(lerp(160, 30, t)),
   };
 }
